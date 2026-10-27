@@ -854,6 +854,55 @@ const spawnAndCollectOutput = Effect.fn("spawnAndCollectOutput")(function* (
   return { stdout, stderr, exitCode } as const;
 });
 
+export class CargoTargetDirectoryError extends Schema.TaggedError<CargoTargetDirectoryError>()(
+  "CargoTargetDirectoryError",
+  {
+    manifestPath: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Could not resolve the cargo target directory for ${this.manifestPath}: ${this.detail}`;
+  }
+}
+
+const CargoMetadata = Schema.Struct({ target_directory: Schema.String });
+const decodeCargoMetadata = Schema.decodeEffect(Schema.fromJsonString(CargoMetadata));
+
+// Honors CARGO_TARGET_DIR and `build.target-dir` in any cargo config, so a shared target directory still packages.
+const resolveCargoTargetDirectory = Effect.fn("resolveCargoTargetDirectory")(function* (
+  repoRoot: string,
+  manifestPath: string,
+) {
+  const spawnCommand = yield* resolveSpawnCommand("cargo", [
+    "metadata",
+    "--format-version",
+    "1",
+    "--no-deps",
+    "--locked",
+    "--manifest-path",
+    manifestPath,
+  ]);
+  const result = yield* spawnAndCollectOutput(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      cwd: repoRoot,
+      shell: spawnCommand.shell,
+    }),
+  );
+  if (result.exitCode !== 0) {
+    return yield* new CargoTargetDirectoryError({
+      manifestPath,
+      detail: result.stderr.trim() || `cargo metadata exited with ${String(result.exitCode)}`,
+    });
+  }
+  const metadata = yield* decodeCargoMetadata(result.stdout).pipe(
+    Effect.mapError(
+      (cause) => new CargoTargetDirectoryError({ manifestPath, detail: String(cause) }),
+    ),
+  );
+  return metadata.target_directory;
+});
+
 const resolveGitCommitHash = Effect.fn("resolveGitCommitHash")(function* (repoRoot: string) {
   const result = yield* spawnAndCollectOutput(
     ChildProcess.make("git", ["rev-parse", "--short=12", "HEAD"], {
@@ -2291,8 +2340,10 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
     Config.withDefault(false),
   );
   const binaryPath = path.join(
-    input.repoRoot,
-    `native/${input.backend}-snap-shot/target`,
+    yield* resolveCargoTargetDirectory(
+      input.repoRoot,
+      path.join(input.repoRoot, `native/${input.backend}-snap-shot/Cargo.toml`),
+    ),
     rustTarget!,
     `release/t3-${input.backend}-snap-shot`,
   );
@@ -2310,10 +2361,6 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.repoRoot,
         shell: spawnCommand.shell,
-        env: {
-          CARGO_TARGET_DIR: path.join(input.repoRoot, `native/${input.backend}-snap-shot/target`),
-        },
-        extendEnv: true,
       }),
       {
         label: `cargo build ${input.backend} capture helper (${rustTarget})`,
@@ -2374,8 +2421,6 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: input.repoRoot,
           shell: spawnCommand.shell,
-          env: { CARGO_TARGET_DIR: path.join(input.repoRoot, "native/resource-monitor/target") },
-          extendEnv: true,
         }),
         {
           label: `cargo build resource monitor (${rustTarget})`,
@@ -2385,8 +2430,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
     }
 
     const binaryPath = path.join(
-      input.repoRoot,
-      "native/resource-monitor/target",
+      yield* resolveCargoTargetDirectory(input.repoRoot, manifestPath),
       rustTarget,
       "release",
       executableName,
