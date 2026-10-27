@@ -30,6 +30,28 @@ pnpm install --frozen-lockfile
 pnpm run dist:desktop:linux:arm64              # needs imagemagick; writes release/*.AppImage and *.deb
 ```
 
+## Installing a fork build as the background service
+
+`t3 update` only fetches published releases, so a local build is placed by hand (done 2026-10-27, 0.1.1 -> 0.1.3):
+
+```sh
+node scripts/build-cli-archive.ts --platform linux --arch arm64 --version <v> \
+  --resource-monitor-dir <dir containing linux-arm64/t3-resource-monitor> --output-dir /tmp/cli
+systemctl --user stop t3code.service
+cp -a ~/.local/share/t3code/home/{userdata,runtime} <backup>/        # the DB is migrated; keep a copy
+tar -xzf /tmp/cli/t3-<v>-linux-arm64.tar.gz -C /tmp && cp -a /tmp/t3-<v>-linux-arm64 \
+  ~/.local/share/t3code/home/runtime/versions/<v> && echo "<v>" > .../versions/<v>/.install-complete
+cd .../versions/<v> && T3CODE_HOME=~/.local/share/t3code/home ./t3 service install --base-dir ~/.local/share/t3code/home
+```
+
+Two things to know:
+
+- **Old runtimes are pruned.** The new version deletes the previous one from `runtime/versions` on first start,
+  so a rollback needs the backup of `runtime/` as well as `userdata/`.
+- **Bind address changed between 0.1.1 and 0.1.3.** A managed service now listens on `0.0.0.0` and drops
+  connections that are not from a private network (`privateNetworkOnly`, `apps/server/src/cli/config.ts`). To keep
+  it loopback-only, put `T3CODE_HOST=127.0.0.1` in `<T3CODE_HOME>/service.env` and restart.
+
 ## Native client
 
 The Pantheon (GTK4/Granite) client is `claude-pantheon-rs` in techmore/mseries-sdk-apps. It speaks this
