@@ -2310,6 +2310,10 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.repoRoot,
         shell: spawnCommand.shell,
+        env: {
+          CARGO_TARGET_DIR: path.join(input.repoRoot, `native/${input.backend}-snap-shot/target`),
+        },
+        extendEnv: true,
       }),
       {
         label: `cargo build ${input.backend} capture helper (${rustTarget})`,
@@ -2370,6 +2374,8 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: input.repoRoot,
           shell: spawnCommand.shell,
+          env: { CARGO_TARGET_DIR: path.join(input.repoRoot, "native/resource-monitor/target") },
+          extendEnv: true,
         }),
         {
           label: `cargo build resource monitor (${rustTarget})`,
